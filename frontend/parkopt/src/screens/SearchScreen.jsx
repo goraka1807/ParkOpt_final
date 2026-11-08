@@ -22,6 +22,15 @@ const VEHICLE_TYPES = [
   'electric',
 ]
 
+const DURATION_PRESETS = [
+  { key: '30m', label: '30 min', minutes: 30 },
+  { key: '1h', label: '1 hour', minutes: 60 },
+  { key: '2h', label: '2 hours', minutes: 120 },
+  { key: '3h', label: '3 hours', minutes: 180 },
+  { key: '5h', label: '5 hours', minutes: 300 },
+  { key: 'custom', label: 'Custom', minutes: null },
+]
+
 const DEFAULT_LAT = 18.5204
 const DEFAULT_LNG = 73.8567
 const SEARCH_RADIUS_KM = 10
@@ -148,6 +157,7 @@ export default function SearchScreen({ onSelectFacility, session }) {
 
   const [vehicleType, setVehicleType] = useState('sedan')
   const [coveredOnly, setCoveredOnly] = useState(false)
+  const [durationPreset, setDurationPreset] = useState('2h')
 
   const [selectedLocation, setSelectedLocation] = useState({
     lat: DEFAULT_LAT,
@@ -193,6 +203,27 @@ export default function SearchScreen({ onSelectFacility, session }) {
       `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`
     )
   }, [])
+
+  const applyDurationPreset = useCallback((presetKey, minutes) => {
+    setDurationPreset(presetKey)
+
+    if (!startsAt) {
+      return
+    }
+
+    const start = new Date(startsAt)
+
+    if (!Number.isFinite(start.getTime())) {
+      return
+    }
+
+    if (minutes === null) {
+      return
+    }
+
+    const end = new Date(start.getTime() + minutes * 60_000)
+    setEndsAt(toLocalDateTime(end))
+  }, [startsAt])
 
   const useMyLocation = () => {
     if (!navigator.geolocation) {
@@ -477,66 +508,165 @@ export default function SearchScreen({ onSelectFacility, session }) {
 
         {/* Filters and results */}
         <div className="mx-auto flex w-full max-w-[420px] flex-1 flex-col px-4 pt-4">
-          {/* Filters */}
-          <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-            <select
-              value={vehicleType}
-              onChange={(event) => setVehicleType(event.target.value)}
-              className="shrink-0 rounded-full border border-white/10 bg-[#1c2b3c] px-3 py-1.5 text-[12px] text-[#F8FAFC] outline-none"
-            >
-              {VEHICLE_TYPES.map((vehicle) => (
-                <option
-                  key={vehicle}
-                  value={vehicle}
-                  className="bg-[#1c2b3c]"
-                >
-                  {vehicle.charAt(0).toUpperCase() + vehicle.slice(1)}
-                </option>
-              ))}
-            </select>
+          <div className="mb-4 space-y-3">
+            <div className="rounded-2xl border border-white/10 bg-[#0d1c2d] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Vehicle
+                </span>
+                <span className="text-[11px] text-[#C6F36A] capitalize">
+                  {vehicleType}
+                </span>
+              </div>
 
-            <button
-              type="button"
-              onClick={() => setCoveredOnly((value) => !value)}
-              className={`flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors ${
-                coveredOnly
-                  ? 'border-[#c5f269]/50 bg-[#c5f269]/20 text-[#c5f269]'
-                  : 'border-white/10 bg-[#1c2b3c] text-[#94A3B8]'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[14px]">
-                garage
-              </span>
-              Covered
-            </button>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {VEHICLE_TYPES.map((vehicle) => (
+                  <button
+                    key={vehicle}
+                    type="button"
+                    onClick={() => setVehicleType(vehicle)}
+                    className={`rounded-xl border px-2 py-2 text-[11px] font-semibold capitalize transition-colors ${
+                      vehicleType === vehicle
+                        ? 'border-[#C6F36A]/60 bg-[#C6F36A]/15 text-[#F8FAFC]'
+                        : 'border-white/10 bg-[#122131] text-[#94A3B8] hover:text-[#F8FAFC]'
+                    }`}
+                  >
+                    {vehicle}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <div className="flex shrink-0 items-center gap-1">
-              <input
-                type="datetime-local"
-                value={startsAt}
-                onChange={(event) => setStartsAt(event.target.value)}
-                aria-label="Start date and time"
-                className="w-[155px] rounded-full border border-white/10 bg-[#1c2b3c] px-2 py-1.5 text-[11px] text-[#F8FAFC] outline-none"
-              />
+            <div className="rounded-2xl border border-white/10 bg-[#0d1c2d] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Access
+                </span>
+                <span className="text-[11px] text-[#94A3B8]">
+                  {coveredOnly ? 'Covered only' : 'Any parking'}
+                </span>
+              </div>
 
-              <input
-                type="datetime-local"
-                value={endsAt}
-                onChange={(event) => setEndsAt(event.target.value)}
-                aria-label="End date and time"
-                className="w-[155px] rounded-full border border-white/10 bg-[#1c2b3c] px-2 py-1.5 text-[11px] text-[#F8FAFC] outline-none"
-              />
+              <button
+                type="button"
+                onClick={() => setCoveredOnly((value) => !value)}
+                className={`flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-[12px] font-semibold transition-colors ${
+                  coveredOnly
+                    ? 'border-[#C6F36A]/60 bg-[#C6F36A]/15 text-[#C6F36A]'
+                    : 'border-white/10 bg-[#122131] text-[#94A3B8]'
+                }`}
+              >
+                <span className="material-symbols-outlined text-[14px]">garage</span>
+                Covered parking only
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-[#0d1c2d] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Duration
+                </span>
+                <span className="text-[11px] text-[#94A3B8]">
+                  {durationPreset === 'custom'
+                    ? 'Custom range'
+                    : `${DURATION_PRESETS.find((preset) => preset.key === durationPreset)?.label ?? '2 hours'}`}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {DURATION_PRESETS.map((preset) => (
+                  <button
+                    key={preset.key}
+                    type="button"
+                    onClick={() => {
+                      if (preset.minutes === null) {
+                        setDurationPreset('custom')
+                        return
+                      }
+
+                      applyDurationPreset(preset.key, preset.minutes)
+                    }}
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                      durationPreset === preset.key
+                        ? 'border-[#C6F36A]/70 bg-[#C6F36A]/15 text-[#C6F36A]'
+                        : 'border-white/10 bg-[#122131] text-[#94A3B8]'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              {durationPreset === 'custom' && (
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#94A3B8]">Start</span>
+                    <input
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(event) => setStartsAt(event.target.value)}
+                      aria-label="Start date and time"
+                      className="rounded-xl border border-white/10 bg-[#122131] px-3 py-2 text-[11px] text-[#F8FAFC] outline-none"
+                    />
+                  </label>
+
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-[#94A3B8]">End</span>
+                    <input
+                      type="datetime-local"
+                      value={endsAt}
+                      onChange={(event) => setEndsAt(event.target.value)}
+                      aria-label="End date and time"
+                      className="rounded-xl border border-white/10 bg-[#122131] px-3 py-2 text-[11px] text-[#F8FAFC] outline-none"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-[#0d1c2d] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                  Time range
+                </span>
+                <span className="text-[11px] text-[#94A3B8]">
+                  {startsAt && endsAt ? 'Ready' : 'Pick times'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-[#94A3B8]">Start</span>
+                  <input
+                    type="datetime-local"
+                    value={startsAt}
+                    onChange={(event) => setStartsAt(event.target.value)}
+                    aria-label="Start date and time"
+                    className="rounded-xl border border-white/10 bg-[#122131] px-3 py-2 text-[11px] text-[#F8FAFC] outline-none"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1">
+                  <span className="text-[10px] uppercase tracking-wider text-[#94A3B8]">End</span>
+                  <input
+                    type="datetime-local"
+                    value={endsAt}
+                    onChange={(event) => setEndsAt(event.target.value)}
+                    aria-label="End date and time"
+                    className="rounded-xl border border-white/10 bg-[#122131] px-3 py-2 text-[11px] text-[#F8FAFC] outline-none"
+                  />
+                </label>
+              </div>
             </div>
 
             <button
               type="button"
               onClick={search}
               aria-label="Search parking"
-              className="flex shrink-0 items-center gap-1 rounded-full bg-[#c5f269] px-3 py-1.5 text-[12px] font-bold text-[#253600]"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-[#c5f269] px-4 py-3 text-[12px] font-bold text-[#253600]"
             >
-              <span className="material-symbols-outlined text-[14px]">
-                search
-              </span>
+              <span className="material-symbols-outlined text-[14px]">search</span>
+              Search parking
             </button>
           </div>
 

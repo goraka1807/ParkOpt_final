@@ -3,6 +3,24 @@ import { supabase, supabaseConfigured } from '../lib/supabase'
 
 const VEHICLE_TYPES = ['motorcycle', 'compact', 'sedan', 'suv', 'van', 'truck', 'electric']
 
+const DURATION_PRESETS = [
+  { key: '30m', label: '30 min', minutes: 30 },
+  { key: '1h', label: '1 hour', minutes: 60 },
+  { key: '2h', label: '2 hours', minutes: 120 },
+  { key: '3h', label: '3 hours', minutes: 180 },
+  { key: '5h', label: '5 hours', minutes: 300 },
+  { key: 'custom', label: 'Custom', minutes: null },
+]
+
+function toLocalDateTime(date) {
+  const pad = (value) => String(value).padStart(2, '0')
+
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  )
+}
+
 function formatPrice(paisa) {
   if (!paisa && paisa !== 0) return '—'
   return '₹' + (paisa / 100).toFixed(2)
@@ -28,6 +46,20 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
   const [startsAt, setStartsAt] = useState(searchParams?.starts_at?.slice(0, 16) || '')
   const [endsAt, setEndsAt] = useState(searchParams?.ends_at?.slice(0, 16) || '')
   const [vehicleType, setVehicleType] = useState(searchParams?.vehicle_type || 'sedan')
+  const [durationPreset, setDurationPreset] = useState(() => {
+    const startValue = searchParams?.starts_at ? new Date(searchParams.starts_at) : null
+    const endValue = searchParams?.ends_at ? new Date(searchParams.ends_at) : null
+
+    if (!startValue || !endValue || !Number.isFinite(startValue.getTime()) || !Number.isFinite(endValue.getTime())) {
+      return '2h'
+    }
+
+    const minutes = Math.max(0, (endValue - startValue) / 60_000)
+
+    const preset = DURATION_PRESETS.find((item) => item.minutes === minutes)
+    return preset ? preset.key : 'custom'
+  })
+  const [isVehicleEditorOpen, setIsVehicleEditorOpen] = useState(() => !searchParams?.vehicle_type)
   const [vehiclePlate, setVehiclePlate] = useState('')
   const [driverNotes, setDriverNotes] = useState('')
   const [loading, setLoading] = useState(false)
@@ -47,6 +79,42 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
     facility?.hourly_rate_paisa && durationHours > 0
       ? Math.round(facility.hourly_rate_paisa * durationHours)
       : null
+
+  const applyDurationPreset = (presetKey) => {
+    const preset = DURATION_PRESETS.find((item) => item.key === presetKey)
+
+    if (!preset || !startsAt) {
+      setDurationPreset(presetKey)
+      return
+    }
+
+    if (preset.minutes === null) {
+      setDurationPreset('custom')
+      return
+    }
+
+    const start = new Date(startsAt)
+    const end = new Date(start.getTime() + preset.minutes * 60_000)
+    setDurationPreset(presetKey)
+    setEndsAt(toLocalDateTime(end))
+  }
+
+  const handleStartTimeChange = (value) => {
+    setStartsAt(value)
+
+    if (durationPreset === 'custom') {
+      return
+    }
+
+    const preset = DURATION_PRESETS.find((item) => item.key === durationPreset)
+    if (!preset || preset.minutes === null) {
+      return
+    }
+
+    const start = new Date(value)
+    const end = new Date(start.getTime() + preset.minutes * 60_000)
+    setEndsAt(toLocalDateTime(end))
+  }
 
   const submit = async () => {
     if (!supabaseConfigured) {
@@ -135,23 +203,48 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
               </h2>
 
               <div className="rounded-2xl bg-[#0d1c2d] border border-white/10 p-4 flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">Start Time</label>
-                  <input
-                    type="datetime-local"
-                    value={startsAt}
-                    onChange={(e) => setStartsAt(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-[#122131] border border-white/10 text-[#F8FAFC] text-[14px] outline-none focus:border-[#c5f269]/50 transition-colors"
-                  />
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">Quick duration</span>
+                  <div className="flex flex-wrap gap-2">
+                    {DURATION_PRESETS.map((preset) => (
+                      <button
+                        key={preset.key}
+                        type="button"
+                        onClick={() => applyDurationPreset(preset.key)}
+                        className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+                          durationPreset === preset.key
+                            ? 'border-[#c5f269]/70 bg-[#c5f269]/15 text-[#c5f269]'
+                            : 'border-white/10 bg-[#122131] text-[#94A3B8]'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">End Time</label>
-                  <input
-                    type="datetime-local"
-                    value={endsAt}
-                    onChange={(e) => setEndsAt(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-[#122131] border border-white/10 text-[#F8FAFC] text-[14px] outline-none focus:border-[#c5f269]/50 transition-colors"
-                  />
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">Start Time</label>
+                    <input
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(e) => handleStartTimeChange(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl bg-[#122131] border border-white/10 text-[#F8FAFC] text-[14px] outline-none focus:border-[#c5f269]/50 transition-colors"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">End Time</label>
+                    <input
+                      type="datetime-local"
+                      value={endsAt}
+                      onChange={(e) => {
+                        setEndsAt(e.target.value)
+                        setDurationPreset('custom')
+                      }}
+                      className="w-full px-4 py-3 rounded-xl bg-[#122131] border border-white/10 text-[#F8FAFC] text-[14px] outline-none focus:border-[#c5f269]/50 transition-colors"
+                    />
+                  </div>
                 </div>
 
                 {startsAt && endsAt && (
@@ -178,25 +271,49 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
               </h2>
 
               <div className="rounded-2xl bg-[#0d1c2d] border border-white/10 p-4 flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-semibold text-white uppercase tracking-wider">Vehicle Type</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {VEHICLE_TYPES.map((v) => (
+                {!isVehicleEditorOpen ? (
+                  <div className="rounded-xl bg-[#122131] border border-white/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">Selected vehicle</p>
+                        <p className="mt-1 text-[18px] font-bold text-[#F8FAFC] capitalize">
+                          {vehicleType}
+                        </p>
+                      </div>
                       <button
-                        key={v}
-                        onClick={() => setVehicleType(v)}
-                        className={`py-2 px-2 rounded-xl text-[12px] font-semibold transition-colors ${
-                          vehicleType === v
-                            ? 'bg-[#c5f269] text-[#253600]'
-                            : 'bg-[#122131] border border-white/10 text-[#94A3B8] hover:text-[#F8FAFC]'
-                        }`}
-                        style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+                        type="button"
+                        onClick={() => setIsVehicleEditorOpen(true)}
+                        className="rounded-full border border-[#c5f269]/30 bg-[#c5f269]/10 px-3 py-1.5 text-[11px] font-semibold text-[#c5f269]"
                       >
-                        {v.charAt(0).toUpperCase() + v.slice(1)}
+                        Change
                       </button>
-                    ))}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-semibold text-white uppercase tracking-wider">Vehicle Type</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {VEHICLE_TYPES.map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          onClick={() => {
+                            setVehicleType(v)
+                            setIsVehicleEditorOpen(false)
+                          }}
+                          className={`py-2 px-2 rounded-xl text-[12px] font-semibold transition-colors ${
+                            vehicleType === v
+                              ? 'bg-[#c5f269] text-[#253600]'
+                              : 'bg-[#122131] border border-white/10 text-[#94A3B8] hover:text-[#F8FAFC]'
+                          }`}
+                          style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+                        >
+                          {v.charAt(0).toUpperCase() + v.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
@@ -268,12 +385,18 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
                 <div className="flex items-center justify-between bg-[#122131] rounded-xl p-3">
                   <div>
                     <p className="text-[10px] text-[#94A3B8] uppercase tracking-wider mb-0.5">Vehicle</p>
-                    <p className="text-[13px] font-semibold text-[#F8FAFC]">
-                      {vehicleType.charAt(0).toUpperCase() + vehicleType.slice(1)}
+                    <p className="text-[13px] font-semibold text-[#F8FAFC] capitalize">
+                      {vehicleType}
                       {vehiclePlate && ` · ${vehiclePlate}`}
                     </p>
                   </div>
-                  <span className="text-[10px] text-[#94A3B8]">{durationHours.toFixed(1)}h</span>
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    className="rounded-full border border-[#c5f269]/30 bg-[#c5f269]/10 px-2.5 py-1 text-[10px] font-semibold text-[#c5f269]"
+                  >
+                    Change
+                  </button>
                 </div>
 
                 {estimatedPaisa && (
