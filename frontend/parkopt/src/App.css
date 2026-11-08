@@ -468,6 +468,148 @@ body{background:radial-gradient(circle at 75% 8%,#182849 0,transparent 36%),#050
   animation: parkopt-scan-sweep 2.8s ease-in-out infinite;
 }
 
+.parkopt-scan-overlay-noise {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+  pointer-events: none;
+}
+
+.parkopt-scan-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: max(18px, env(safe-area-inset-top)) 18px 12px;
+  background: rgba(7, 12, 14, 0.3);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.parkopt-scan-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(8, 15, 15, 0.5);
+  color: #edf8eb;
+  cursor: pointer;
+}
+
+.parkopt-scan-title {
+  color: #edf8eb;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.parkopt-scan-status {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding: 0 20px 10px;
+  text-align: center;
+}
+
+.parkopt-scan-status-text {
+  color: #edf8eb;
+  font-size: 14px;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.parkopt-scan-result {
+  color: rgba(204, 233, 187, 0.9);
+  font-size: 12px;
+  font-family: 'Space Grotesk', sans-serif;
+  word-break: break-word;
+}
+
+.parkopt-scan-controls {
+  position: relative;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 18px 12px;
+}
+
+.parkopt-scan-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px solid rgba(198, 243, 106, 0.2);
+  border-radius: 14px;
+  background: rgba(8, 15, 14, 0.64);
+  color: #edf9d7;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
+  cursor: pointer;
+}
+
+.parkopt-scan-control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.parkopt-hidden-input {
+  display: none;
+}
+
+.parkopt-manual-entry {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+  padding: 0 18px calc(18px + env(safe-area-inset-bottom));
+}
+
+.parkopt-manual-entry input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(10, 17, 17, 0.8);
+  color: #edf8eb;
+  padding: 0 14px;
+  font-size: 14px;
+  font-family: 'Space Grotesk', sans-serif;
+  outline: none;
+}
+
+.parkopt-manual-entry input::placeholder {
+  color: rgba(206, 219, 214, 0.62);
+}
+
+.parkopt-manual-entry button {
+  min-width: 110px;
+  height: 46px;
+  border: 0;
+  border-radius: 14px;
+  background: rgba(198, 243, 106, 0.15);
+  color: #ecf9d3;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'Space Grotesk', sans-serif;
+  cursor: pointer;
+}
+
 @keyframes parkopt-scan-sweep {
   0% { top: 20%; opacity: 0.2; }
   15% { opacity: 1; }

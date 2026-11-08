@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import jsQR from 'jsqr'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
 
@@ -208,6 +209,30 @@ function HomeHeader({ onExplore }) {
 // ── Root app ─────────────────────────────────────────────────────────────────
 const PROTECTED_PAGES = ['bookings', 'profile']
 
+function parseQrCode(value) {
+  const trimmed = String(value ?? '').trim()
+
+  if (!trimmed) return null
+
+  const lower = trimmed.toLowerCase()
+  const facilityMatch = trimmed.match(/(?:facility|facility_id|location)[\s:_-]*([a-z0-9-]+)/i)
+  const spaceMatch = trimmed.match(/(?:space|bay|slot)[\s:_-]*([a-z0-9-]+)/i)
+
+  if (facilityMatch) {
+    return { type: 'facility', id: facilityMatch[1] }
+  }
+
+  if (spaceMatch) {
+    return { type: 'space', id: spaceMatch[1] }
+  }
+
+  if (/(facility|space|location|parkopt|bay)/i.test(lower)) {
+    return { type: 'generic', id: trimmed }
+  }
+
+  return { type: 'generic', id: trimmed }
+}
+
 export default function App() {
   const [page, setPage] = useState('home')
   const [session, setSession] = useState(null)
@@ -219,41 +244,193 @@ export default function App() {
   const [searchParams, setSearchParams] = useState(null)
   const [confirmedBooking, setConfirmedBooking] = useState(null)
   const [scanOpen, setScanOpen] = useState(false)
+  const [scanPreviousPage, setScanPreviousPage] = useState('explore')
+  const [scanStatus, setScanStatus] = useState('Align the QR code within the frame')
+  const [scanError, setScanError] = useState('')
+  const [flashEnabled, setFlashEnabled] = useState(false)
+  const [flashSupported, setFlashSupported] = useState(false)
+  const [manualCode, setManualCode] = useState('')
+  const [scanResult, setScanResult] = useState('')
   const videoRef = useRef(null)
+  const streamRef = useRef(null)
+  const detectionFrameRef = useRef(null)
+  const fileInputRef = useRef(null)
+  const scanHandledRef = useRef(false)
+  const lastScannedValueRef = useRef('')
+
+  const stopCamera = useCallback(() => {
+    if (detectionFrameRef.current) {
+      cancelAnimationFrame(detectionFrameRef.current)
+      detectionFrameRef.current = null
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+    }
+
+    if (videoRef.current) {
+      videoRef.current.pause()
+      videoRef.current.srcObject = null
+    }
+  }, [])
+
+  const handleDecodedQr = useCallback(
+    (value) => {
+      const cleaned = String(value ?? '').trim()
+
+      if (!cleaned) {
+        setScanError('No QR value was detected. Try again or use manual entry.')
+        return
+      }
+
+      if (lastScannedValueRef.current === cleaned) {
+        return
+      }
+
+      lastScannedValueRef.current = cleaned
+      setScanResult(cleaned)
+
+      const parsed = parseQrCode(cleaned)
+      const label = parsed ? `${parsed.type.toUpperCase()} ${parsed.id}` : cleaned
+      setScanStatus(`Scanned: ${label}`)
+
+      setTimeout(() => {
+        setScanOpen(false)
+        setManualCode('')
+        setScanError('')
+        setScanResult('')
+        setPage(scanPreviousPage)
+      }, 250)
+    },
+    [scanPreviousPage]
+  )
+
+  const detectQrFromImage = useCallback((imageElement) => {
+    const canvas = document.createElement('canvas')
+    const width = imageElement.naturalWidth || imageElement.width || 640
+    const height = imageElement.naturalHeight || imageElement.height || 480
+    canvas.width = width
+    canvas.height = height
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) {
+      setScanError('Image decoding is not supported in this browser.')
+      return
+    }
+
+    ctx.drawImage(imageElement, 0, 0, width, height)
+    const imageData = ctx.getImageData(0, 0, width, height)
+    const result = jsQR(imageData.data, width, height, { inversionAttempts: 'dontInvert' })
+
+    if (!result) {
+      setScanError('No QR code was found in that image. Try a clearer photo or use manual entry.')
+      return
+    }
+
+    handleDecodedQr(result.data)
+  }, [handleDecodedQr])
+
+  const startCamera = useCallback(async () => {
+    stopCamera()
+    setScanError('')
+    setScanStatus('Requesting camera access...')
+    setFlashEnabled(false)
+    setFlashSupported(false)
+    scanHandledRef.current = false
+
+    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+      setScanError('Camera access requires HTTPS. Open the app over a secure connection to scan QR codes.')
+      return
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setScanError('This browser does not support camera access.')
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      })
+
+      streamRef.current = stream
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play().catch(() => undefined)
+      }
+
+      const track = stream.getVideoTracks()[0]
+      const capabilities = track?.getCapabilities?.() || {}
+      setFlashSupported(Boolean(capabilities.torch))
+
+      const detectLoop = () => {
+        const video = videoRef.current
+
+        if (!video || video.readyState < 2) {
+          detectionFrameRef.current = requestAnimationFrame(detectLoop)
+          return
+        }
+
+        if (scanHandledRef.current) return
+
+        const canvas = document.createElement('canvas')
+        const width = video.videoWidth || 640
+        const height = video.videoHeight || 480
+        canvas.width = width
+        canvas.height = height
+
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+
+        if (!context) {
+          setScanError('The camera stream could not be decoded in this browser.')
+          return
+        }
+
+        context.drawImage(video, 0, 0, width, height)
+        const imageData = context.getImageData(0, 0, width, height)
+        const result = jsQR(imageData.data, width, height, { inversionAttempts: 'dontInvert' })
+
+        if (result) {
+          scanHandledRef.current = true
+          handleDecodedQr(result.data)
+          return
+        }
+
+        detectionFrameRef.current = requestAnimationFrame(detectLoop)
+      }
+
+      detectionFrameRef.current = requestAnimationFrame(detectLoop)
+      setScanStatus('Align the QR code within the frame')
+    } catch (error) {
+      if (error && error.name === 'NotAllowedError') {
+        setScanError('Camera permission was denied. Please allow camera access to scan a QR code.')
+      } else if (error && error.name === 'NotFoundError') {
+        setScanError('No camera is available on this device right now.')
+      } else {
+        setScanError('The camera could not be opened. Please try again or use a gallery image instead.')
+      }
+    }
+  }, [handleDecodedQr, stopCamera])
 
   useEffect(() => {
-    if (!scanOpen) return undefined
-
-    let stream = null
-    let cancelled = false
-
-    const startCamera = async () => {
-      if (!navigator.mediaDevices?.getUserMedia) return
-
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-          audio: false,
-        })
-
-        if (!cancelled && videoRef.current) {
-          videoRef.current.srcObject = stream
-          videoRef.current.play().catch(() => undefined)
-        }
-      } catch (error) {
-        console.warn('Camera unavailable for the scanner.', error)
-      }
+    if (!scanOpen) {
+      stopCamera()
+      return undefined
     }
 
     void startCamera()
 
     return () => {
-      cancelled = true
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
-      }
+      stopCamera()
     }
-  }, [scanOpen])
+  }, [scanOpen, startCamera, stopCamera])
 
   // Auth state listener
   useEffect(() => {
@@ -274,11 +451,16 @@ export default function App() {
   // Intercept nav to protected pages → bounce to auth
   const navigate = (dest) => {
     if (dest === 'scan') {
+      setScanPreviousPage(page)
       setScanOpen(true)
       return
     }
 
     setScanOpen(false)
+    lastScannedValueRef.current = ''
+    setScanResult('')
+    setScanError('')
+    setScanStatus('Align the QR code within the frame')
 
     if (PROTECTED_PAGES.includes(dest) && !session) {
       setPage('auth')
@@ -338,7 +520,12 @@ export default function App() {
 
   const handleSignOut = () => {
     setSession(null)
+    stopCamera()
     setScanOpen(false)
+    setScanError('')
+    setScanStatus('Align the QR code within the frame')
+    setScanResult('')
+    lastScannedValueRef.current = ''
     setPage('home')
   }
 
@@ -351,8 +538,68 @@ export default function App() {
     )
   }
 
+  const handleManualScan = (event) => {
+    event.preventDefault()
+
+    const trimmed = manualCode.trim()
+    if (!trimmed) {
+      setScanError('Enter a QR or location code to continue.')
+      return
+    }
+
+    setScanError('')
+    const parsed = parseQrCode(trimmed)
+    setScanStatus(parsed ? `Scanned: ${parsed.type.toUpperCase()} ${parsed.id}` : `Scanned: ${trimmed}`)
+    setScanResult(trimmed)
+    setTimeout(() => {
+      setScanOpen(false)
+      setPage(scanPreviousPage)
+      setManualCode('')
+      setScanStatus('Align the QR code within the frame')
+    }, 250)
+  }
+
+  const toggleTorch = async () => {
+    const track = streamRef.current?.getVideoTracks()[0]
+    const capabilities = track?.getCapabilities?.() || {}
+
+    if (!track || !capabilities.torch) {
+      setFlashSupported(false)
+      return
+    }
+
+    try {
+      const nextState = !flashEnabled
+      await track.applyConstraints({
+        advanced: [{ torch: nextState }],
+      })
+      setFlashEnabled(nextState)
+    } catch (error) {
+      setScanError('This device could not switch the flashlight on or off.')
+    }
+  }
+
+  const handleGalleryFile = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const imageUrl = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      detectQrFromImage(image)
+      URL.revokeObjectURL(imageUrl)
+      event.target.value = ''
+    }
+    image.onerror = () => {
+      setScanError('The selected image could not be opened.')
+      URL.revokeObjectURL(imageUrl)
+      event.target.value = ''
+    }
+    image.src = imageUrl
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
-  const showBottomNav = !['home', 'auth', 'pass', 'facility', 'booking'].includes(page)
+  const showBottomNav = !['home', 'auth', 'pass', 'facility', 'booking'].includes(page) && !scanOpen
   const activeNavPage = scanOpen ? 'scan' : page
 
   return (
@@ -365,7 +612,7 @@ export default function App() {
 
       {page === 'auth' && <AuthScreen onAuth={handleAuth} />}
 
-      {page === 'explore' && (
+      {!scanOpen && page === 'explore' && (
         <SearchScreen
           session={session}
           onSelectFacility={handleSelectFacility}
@@ -432,6 +679,27 @@ export default function App() {
 
       {scanOpen && (
         <div className="parkopt-scan-overlay" role="dialog" aria-modal="true" aria-label="QR scanner">
+          <div className="parkopt-scan-topbar">
+            <button
+              type="button"
+              className="parkopt-scan-back"
+              onClick={() => {
+                stopCamera()
+                setScanOpen(false)
+                setPage(scanPreviousPage)
+                setManualCode('')
+                setScanError('')
+                setScanStatus('Align the QR code within the frame')
+                setScanResult('')
+                lastScannedValueRef.current = ''
+              }}
+              aria-label="Back to previous screen"
+            >
+              <span className="material-symbols-outlined">arrow_back</span>
+            </button>
+            <div className="parkopt-scan-title">Scan QR Code</div>
+          </div>
+
           <div className="parkopt-scan-view">
             {navigator.mediaDevices?.getUserMedia ? (
               <video ref={videoRef} className="parkopt-scan-video" autoPlay muted playsInline />
@@ -443,7 +711,56 @@ export default function App() {
               <div className="parkopt-scan-target" />
             </div>
             <div className="parkopt-scan-line" aria-hidden="true" />
+            <div className="parkopt-scan-overlay-noise" aria-hidden="true" />
           </div>
+
+          <div className="parkopt-scan-status">
+            <div className="parkopt-scan-status-text">
+              {scanError || scanStatus || 'Align the QR code within the frame'}
+            </div>
+            {scanResult ? <div className="parkopt-scan-result">Last code: {scanResult}</div> : null}
+          </div>
+
+          <div className="parkopt-scan-controls">
+            <button
+              type="button"
+              className="parkopt-scan-control"
+              disabled={!flashSupported}
+              onClick={toggleTorch}
+            >
+              <span className="material-symbols-outlined">{flashEnabled ? 'flashlight_off' : 'flashlight_on'}</span>
+              {flashSupported ? (flashEnabled ? 'Flash on' : 'Flash off') : 'Flash unavailable'}
+            </button>
+
+            <button
+              type="button"
+              className="parkopt-scan-control"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <span className="material-symbols-outlined">photo_library</span>
+              Gallery
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="parkopt-hidden-input"
+              onChange={handleGalleryFile}
+            />
+          </div>
+
+          <form className="parkopt-manual-entry" onSubmit={handleManualScan}>
+            <input
+              type="text"
+              value={manualCode}
+              onChange={(event) => setManualCode(event.target.value)}
+              placeholder="Enter QR or location code"
+              aria-label="Enter QR or location code"
+            />
+            <button type="submit">Use code</button>
+          </form>
         </div>
       )}
     </>
