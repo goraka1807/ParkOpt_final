@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
+const validateEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
 export default function AuthScreen({ onAuth }) {
   const [tab, setTab] = useState('signin') // 'signin' | 'signup'
   const [email, setEmail] = useState('')
@@ -16,20 +18,29 @@ export default function AuthScreen({ onAuth }) {
       setError('Backend not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local')
       return
     }
+
+    const normalizedEmail = email.trim().toLowerCase()
+    const normalizedFullName = fullName.trim()
+
+    if (!validateEmail(normalizedEmail)) {
+      setError('Please enter a valid email address.')
+      return
+    }
+
     setLoading(true)
     setError(null)
     setSuccessMsg(null)
 
     try {
       if (tab === 'signin') {
-        const { data, error: authErr } = await supabase.auth.signInWithPassword({ email, password })
+        const { data, error: authErr } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
         if (authErr) throw authErr
         if (data.user) onAuth(data.user, data.session)
       } else {
         const { data, error: authErr } = await supabase.auth.signUp({
-          email,
+          email: normalizedEmail,
           password,
-          options: { data: { full_name: fullName } },
+          options: { data: { full_name: normalizedFullName } },
         })
         if (authErr) throw authErr
         if (data.user && !data.session) {
@@ -102,7 +113,7 @@ export default function AuthScreen({ onAuth }) {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => setEmail(e.target.value.trim())}
                 placeholder="you@example.com"
                 required
                 className="w-full px-4 py-3 rounded-full bg-[#122131] border border-white/10 text-[#F8FAFC] text-[14px] placeholder-[#94A3B8] outline-none focus:border-[#c5f269]/50 transition-colors"

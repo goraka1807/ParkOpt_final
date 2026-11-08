@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabaseConfigured } from '../lib/supabase'
+import { supabase, supabaseConfigured } from '../lib/supabase'
 
 const VEHICLE_TYPES = ['motorcycle', 'compact', 'sedan', 'suv', 'van', 'truck', 'electric']
 
@@ -53,10 +53,6 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
       setError('Backend not configured.')
       return
     }
-    if (!session?.access_token) {
-      setError('Not authenticated.')
-      return
-    }
     if (!durationValid) {
       setError('Minimum booking duration is 2 hours.')
       return
@@ -65,6 +61,18 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
     setError(null)
 
     try {
+      let authToken = session?.access_token
+
+      if (!authToken && supabase) {
+        const { data: sessionData } = await supabase.auth.getSession()
+        authToken = sessionData?.session?.access_token
+      }
+
+      if (!authToken) {
+        setError('Not authenticated. Please sign in to continue.')
+        return
+      }
+
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
       const body = {
         space_id: spaceId,
@@ -80,7 +88,7 @@ export default function BookingScreen({ facility, searchParams, session, onConfi
         headers: {
           'Content-Type': 'application/json',
           'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${authToken}`,
         },
         body: JSON.stringify(body),
       })

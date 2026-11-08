@@ -212,6 +212,7 @@ export default function App() {
   const [page, setPage] = useState('home')
   const [session, setSession] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const [authRedirect, setAuthRedirect] = useState(null)
 
   // Drill-down state
   const [selectedFacility, setSelectedFacility] = useState(null)
@@ -240,6 +241,9 @@ export default function App() {
       setPage('auth')
       return
     }
+    if (dest !== 'auth') {
+      setAuthRedirect(null)
+    }
     // Reset drill-down when navigating away
     if (!['facility', 'booking', 'pass'].includes(dest)) {
       setSelectedFacility(null)
@@ -251,6 +255,16 @@ export default function App() {
 
   const handleAuth = (_user, sess) => {
     setSession(sess)
+
+    if (authRedirect && authRedirect.type === 'booking') {
+      setSelectedFacility(authRedirect.facility)
+      setSearchParams(authRedirect.params)
+      setAuthRedirect(null)
+      setPage('booking')
+      return
+    }
+
+    setAuthRedirect(null)
     setPage('explore')
   }
 
@@ -261,6 +275,14 @@ export default function App() {
   }
 
   const handleBook = (facility, params) => {
+    if (!session) {
+      setSelectedFacility(facility)
+      setSearchParams(params)
+      setAuthRedirect({ type: 'booking', facility, params })
+      setPage('auth')
+      return
+    }
+
     setSelectedFacility(facility)
     setSearchParams(params)
     setPage('booking')
