@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
 import { supabase, supabaseConfigured } from './lib/supabase'
 
@@ -218,6 +218,42 @@ export default function App() {
   const [selectedFacility, setSelectedFacility] = useState(null)
   const [searchParams, setSearchParams] = useState(null)
   const [confirmedBooking, setConfirmedBooking] = useState(null)
+  const [scanOpen, setScanOpen] = useState(false)
+  const videoRef = useRef(null)
+
+  useEffect(() => {
+    if (!scanOpen) return undefined
+
+    let stream = null
+    let cancelled = false
+
+    const startCamera = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) return
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false,
+        })
+
+        if (!cancelled && videoRef.current) {
+          videoRef.current.srcObject = stream
+          videoRef.current.play().catch(() => undefined)
+        }
+      } catch (error) {
+        console.warn('Camera unavailable for the scanner.', error)
+      }
+    }
+
+    void startCamera()
+
+    return () => {
+      cancelled = true
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop())
+      }
+    }
+  }, [scanOpen])
 
   // Auth state listener
   useEffect(() => {
@@ -237,6 +273,13 @@ export default function App() {
 
   // Intercept nav to protected pages → bounce to auth
   const navigate = (dest) => {
+    if (dest === 'scan') {
+      setScanOpen(true)
+      return
+    }
+
+    setScanOpen(false)
+
     if (PROTECTED_PAGES.includes(dest) && !session) {
       setPage('auth')
       return
@@ -295,6 +338,7 @@ export default function App() {
 
   const handleSignOut = () => {
     setSession(null)
+    setScanOpen(false)
     setPage('home')
   }
 
@@ -308,7 +352,9 @@ export default function App() {
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
-const showBottomNav = !['home', 'auth', 'pass', 'facility', 'booking'].includes(page)
+  const showBottomNav = !['home', 'auth', 'pass', 'facility', 'booking'].includes(page)
+  const activeNavPage = scanOpen ? 'scan' : page
+
   return (
     <>
       {/* Home page keeps its original desktop header */}
@@ -379,9 +425,26 @@ const showBottomNav = !['home', 'auth', 'pass', 'facility', 'booking'].includes(
       {/* Bottom navigation (all app pages except home, auth, pass) */}
       {showBottomNav && (
         <BottomNav
-          activePage={page}
+          activePage={activeNavPage}
           onNavigate={navigate}
         />
+      )}
+
+      {scanOpen && (
+        <div className="parkopt-scan-overlay" role="dialog" aria-modal="true" aria-label="QR scanner">
+          <div className="parkopt-scan-view">
+            {navigator.mediaDevices?.getUserMedia ? (
+              <video ref={videoRef} className="parkopt-scan-video" autoPlay muted playsInline />
+            ) : (
+              <div className="parkopt-scan-placeholder">Camera unavailable on this device.</div>
+            )}
+
+            <div className="parkopt-scan-frame" aria-hidden="true">
+              <div className="parkopt-scan-target" />
+            </div>
+            <div className="parkopt-scan-line" aria-hidden="true" />
+          </div>
+        </div>
       )}
     </>
   )

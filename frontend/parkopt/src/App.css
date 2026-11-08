@@ -293,3 +293,207 @@ body{background:radial-gradient(circle at 75% 8%,#182849 0,transparent 36%),#050
   .booking-page .pass-card{display:block}
 }
 
+.parkopt-nav-shell {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 80;
+  width: min(92vw, 420px);
+  pointer-events: none;
+}
+
+.parkopt-nav {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  height: 82px;
+  padding: 8px 14px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(186, 227, 171, 0.12);
+  background: linear-gradient(180deg, rgba(12, 42, 33, 0.98), rgba(9, 32, 28, 0.96));
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.parkopt-nav__button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: rgba(218, 232, 214, 0.82);
+  cursor: pointer;
+  transition: transform 0.18s ease, color 0.18s ease;
+}
+
+.parkopt-nav__button:hover {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.parkopt-nav__button:active {
+  transform: scale(0.97);
+}
+
+.parkopt-nav__button--scan {
+  position: relative;
+}
+
+.parkopt-nav__button--scan::before {
+  content: '';
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: rgba(183, 205, 176, 0.15);
+  box-shadow: inset 0 0 0 1px rgba(214, 232, 200, 0.16);
+}
+
+.parkopt-nav__icon {
+  position: relative;
+  z-index: 1;
+  font-size: 28px !important;
+  line-height: 1;
+  color: rgba(226, 236, 223, 0.8);
+  font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 32;
+}
+
+.parkopt-nav__button--scan .parkopt-nav__icon,
+.parkopt-nav__icon.is-active {
+  color: #edf9d7;
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 40;
+}
+
+.parkopt-scan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: rgba(4, 8, 11, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.parkopt-scan-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: max(18px, env(safe-area-inset-top)) 18px 10px;
+}
+
+.parkopt-scan-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  background: rgba(13, 17, 20, 0.72);
+  color: #edf8eb;
+  cursor: pointer;
+}
+
+.parkopt-scan-view {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 520px);
+  margin: 0 auto;
+  padding: 0 18px calc(30px + env(safe-area-inset-bottom));
+}
+
+.parkopt-scan-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #060b10;
+}
+
+.parkopt-scan-placeholder {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(80vw, 420px);
+  height: 60vh;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(12, 17, 20, 0.8);
+  color: rgba(236, 248, 223, 0.9);
+  text-align: center;
+  padding: 24px;
+}
+
+.parkopt-scan-frame {
+  position: absolute;
+  width: min(76vw, 320px);
+  height: min(76vw, 320px);
+  border: 2px solid rgba(196, 239, 170, 0.75);
+  border-radius: 22px;
+  box-shadow: inset 0 0 0 2px rgba(196, 239, 170, 0.2), 0 0 24px rgba(193, 246, 171, 0.18);
+  background: transparent;
+  z-index: 2;
+}
+
+.parkopt-scan-target {
+  position: absolute;
+  inset: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+}
+
+.parkopt-scan-line {
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  transform: translateX(-50%);
+  width: min(70vw, 290px);
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(201, 255, 159, 0.9), transparent);
+  box-shadow: 0 0 18px rgba(201, 255, 159, 0.6);
+  z-index: 3;
+  opacity: 0.9;
+  animation: parkopt-scan-sweep 2.8s ease-in-out infinite;
+}
+
+@keyframes parkopt-scan-sweep {
+  0% { top: 20%; opacity: 0.2; }
+  15% { opacity: 1; }
+  50% { top: 68%; opacity: 1; }
+  100% { top: 20%; opacity: 0.2; }
+}
+
+@media (max-width: 420px) {
+  .parkopt-nav {
+    height: 72px;
+    gap: 4px;
+    padding-inline: 10px;
+  }
+
+  .parkopt-nav__button--active::before {
+    width: 46px;
+    height: 46px;
+  }
+
+  .parkopt-nav__button--scan.parkopt-nav__button--active::before {
+    width: 54px;
+    height: 54px;
+  }
+
+  .parkopt-nav__icon {
+    font-size: 25px !important;
+  }
+}
+
