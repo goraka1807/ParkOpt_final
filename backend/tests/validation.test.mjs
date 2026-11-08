@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
   hasExplicitTimezone,
+  isSecureQrCode,
   isValidUuid,
   parseBooleanInput,
+  validateBookingPassRequest,
   validateBookingRequest,
   validateSearchRequest,
 } from '../supabase/functions/shared/validation.mjs';
@@ -83,4 +85,21 @@ test('booking validation accepts valid payload and rejects invalid type or time 
 
   assert.equal(invalid.valid, false);
   assert.match(invalid.errors.join(' '), /space_id|timezone|vehicle_type|ends_at/);
+});
+
+test('facility and booking QR identifiers use secure ParkOpt patterns', () => {
+  assert.equal(isSecureQrCode('parkopt_fac_9f8a3d1b1c2e'), true);
+  assert.equal(isSecureQrCode('parkopt_space_82b72c1d4e29', 'space'), true);
+  assert.equal(isSecureQrCode('parkopt_pass_8a7b9c6d5e4f9a1b2c3d4e5f6a7b8c9d', 'booking_pass'), true);
+  assert.equal(isSecureQrCode('facility-123', 'facility'), false);
+  assert.equal(isSecureQrCode('parkopt_pass_user-123', 'booking_pass'), false);
+});
+
+test('booking pass validation rejects unsafe tokens and accepts secure ones', () => {
+  const valid = validateBookingPassRequest({ token: 'parkopt_pass_8a7b9c6d5e4f9a1b2c3d4e5f6a7b8c9d' });
+  const invalid = validateBookingPassRequest({ token: 'user@example.com' });
+
+  assert.equal(valid.valid, true);
+  assert.equal(invalid.valid, false);
+  assert.match(invalid.errors.join(' '), /valid ParkOpt/);
 });

@@ -41,6 +41,65 @@ export function isValidUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
+export function isSecureQrCode(value, kind = 'facility') {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  const patterns = {
+    facility: /^parkopt_fac_[A-Za-z0-9_-]{12,64}$/i,
+    space: /^parkopt_space_[A-Za-z0-9_-]{12,64}$/i,
+    floor: /^parkopt_floor_[A-Za-z0-9_-]{12,64}$/i,
+    zone: /^parkopt_zone_[A-Za-z0-9_-]{12,64}$/i,
+    booking_pass: /^parkopt_pass_[A-Za-z0-9_-]{18,128}$/i,
+  };
+
+  return Boolean(patterns[kind] && patterns[kind].test(trimmed));
+}
+
+export function validateQrReferenceRequest(body = {}, kind = 'facility') {
+  const errors = [];
+
+  if (!isPlainObject(body)) {
+    return { valid: false, errors: ['Request body must be a JSON object.'], normalized: null };
+  }
+
+  const qrcode = body.qr_code ?? body.qrCode ?? body.code ?? null;
+  if (!isSecureQrCode(qrcode, kind)) {
+    errors.push(`${kind} QR code must follow the secure ParkOpt format.`);
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    normalized: {
+      qr_code: typeof qrcode === 'string' ? qrcode.trim() : null,
+    },
+  };
+}
+
+export function validateBookingPassRequest(body = {}) {
+  const errors = [];
+
+  if (!isPlainObject(body)) {
+    return { valid: false, errors: ['Request body must be a JSON object.'], normalized: null };
+  }
+
+  const token = body.token ?? body.qr_code ?? body.qrCode ?? null;
+  if (!isSecureQrCode(token, 'booking_pass')) {
+    errors.push('token must be a valid ParkOpt booking pass identifier.');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    normalized: {
+      token: typeof token === 'string' ? token.trim() : null,
+    },
+  };
+}
+
 export function validateSearchRequest(body = {}) {
   const errors = [];
 

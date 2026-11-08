@@ -146,6 +146,21 @@ Deno.serve(async (req: Request) => {
       error_code?: string
       message?: string
       booking_id?: string
+      booking_pass_token?: string
+      booking_pass_expires_at?: string
+      booking_pass_status?: string
+    }
+
+    if (result.success && result.booking_id) {
+      const { data: passData, error: passError } = await supabase.rpc('generate_booking_pass', {
+        p_booking_id: result.booking_id,
+      })
+
+      if (!passError && passData) {
+        result.booking_pass_token = passData.token
+        result.booking_pass_expires_at = passData.expires_at
+        result.booking_pass_status = passData.status
+      }
     }
 
     if (!result.success) {
