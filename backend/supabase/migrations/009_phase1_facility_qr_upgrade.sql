@@ -5,21 +5,26 @@
 --   - support both independent parking lots and mall-style facilities
 --   - track facility -> floor -> zone -> parking space hierarchy
 --   - assign secure QR identifiers to facilities and spaces
---   - create booking QR pass records used for digital parking verification
---
--- This migration is additive and backwards compatible:
---   - existing parking_spaces rows are preserved
---   - legacy searches and booking flows continue to function
---   - new facility relationships are backfilled for existing data
+--   - preserve legacy space records and booking data while adding hierarchy
 -- =============================================================================
 
 CREATE TYPE facility_kind AS ENUM ('independent_lot', 'shopping_mall');
 CREATE TYPE facility_status AS ENUM ('active', 'inactive', 'maintenance', 'archived');
 CREATE TYPE booking_pass_status AS ENUM ('active', 'expired', 'revoked', 'used');
 
+-- Security helper for random opaque QR codes.
+CREATE OR REPLACE FUNCTION public.generate_secure_qr_code(p_prefix TEXT)
+RETURNS TEXT
+LANGUAGE sql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT p_prefix || encode(extensions.gen_random_bytes(16), 'hex');
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Table: public.facilities
--- Purpose: top-level facility entity for independent lots and mall properties.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.facilities (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -63,6 +68,7 @@ DROP POLICY IF EXISTS "facilities_select_public_active" ON public.facilities;
 DROP POLICY IF EXISTS "facilities_select_owner_or_admin" ON public.facilities;
 DROP POLICY IF EXISTS "facilities_insert_owner" ON public.facilities;
 DROP POLICY IF EXISTS "facilities_update_owner" ON public.facilities;
+DROP POLICY IF EXISTS "facilities_delete_owner" ON public.facilities;
 
 CREATE POLICY "facilities_select_public_active"
   ON public.facilities
@@ -97,9 +103,13 @@ CREATE POLICY "facilities_update_owner"
   USING (auth.uid() = owner_id)
   WITH CHECK (auth.uid() = owner_id);
 
+CREATE POLICY "facilities_delete_owner"
+  ON public.facilities
+  FOR DELETE
+  USING (auth.uid() = owner_id);
+
 -- ---------------------------------------------------------------------------
 -- Table: public.facility_floors
--- Purpose: Floors within a mall or large facility.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.facility_floors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,15 +118,91 @@ CREATE TABLE IF NOT EXISTS public.facility_floors (
   label TEXT NOT NULL DEFAULT 'Level',
   qr_code_id TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CHECK (qr_code_id ~ '^parkopt_floor_[A-Za-z0-9_-]{12,64}$')
+  CHECK (qr_code_id ~ '^parkopt_floor_[A-Za-z0-9_-]{12,64}$'),
+  UNIQUE (facility_id, floor_number)
 );
 
 CREATE INDEX IF NOT EXISTS idx_facility_floors_facility_id ON public.facility_floors(facility_id);
 CREATE INDEX IF NOT EXISTS idx_facility_floors_number ON public.facility_floors(facility_id, floor_number);
 
+ALTER TABLE public.facility_floors ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "facility_floors_select_public_active" ON public.facility_floors;
+DROP POLICY IF EXISTS "facility_floors_select_owner_or_admin" ON public.facility_floors;
+DROP POLICY IF EXISTS "facility_floors_insert_owner" ON public.facility_floors;
+DROP POLICY IF EXISTS "facility_floors_update_owner" ON public.facility_floors;
+DROP POLICY IF EXISTS "facility_floors_delete_owner" ON public.facility_floors;
+
+CREATE POLICY "facility_floors_select_public_active"
+  ON public.facility_floors
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.status = 'active'
+    )
+  );
+
+CREATE POLICY "facility_floors_select_owner_or_admin"
+  ON public.facility_floors
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id
+        AND (f.owner_id = auth.uid() OR EXISTS (
+          SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+        ))
+    )
+  );
+
+CREATE POLICY "facility_floors_insert_owner"
+  ON public.facility_floors
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id
+        AND (f.owner_id = auth.uid() OR EXISTS (
+          SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+        ))
+    )
+  );
+
+CREATE POLICY "facility_floors_update_owner"
+  ON public.facility_floors
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  );
+
+CREATE POLICY "facility_floors_delete_owner"
+  ON public.facility_floors
+  FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  );
+
 -- ---------------------------------------------------------------------------
 -- Table: public.facility_zones
--- Purpose: logical zones inside a floor or facility (e.g., Basement A / East Wing / Level 2).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.facility_zones (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -130,6 +216,82 @@ CREATE TABLE IF NOT EXISTS public.facility_zones (
 
 CREATE INDEX IF NOT EXISTS idx_facility_zones_facility_id ON public.facility_zones(facility_id);
 CREATE INDEX IF NOT EXISTS idx_facility_zones_floor_id ON public.facility_zones(floor_id);
+
+ALTER TABLE public.facility_zones ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "facility_zones_select_public_active" ON public.facility_zones;
+DROP POLICY IF EXISTS "facility_zones_select_owner_or_admin" ON public.facility_zones;
+DROP POLICY IF EXISTS "facility_zones_insert_owner" ON public.facility_zones;
+DROP POLICY IF EXISTS "facility_zones_update_owner" ON public.facility_zones;
+DROP POLICY IF EXISTS "facility_zones_delete_owner" ON public.facility_zones;
+
+CREATE POLICY "facility_zones_select_public_active"
+  ON public.facility_zones
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.status = 'active'
+    )
+  );
+
+CREATE POLICY "facility_zones_select_owner_or_admin"
+  ON public.facility_zones
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id
+        AND (f.owner_id = auth.uid() OR EXISTS (
+          SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+        ))
+    )
+  );
+
+CREATE POLICY "facility_zones_insert_owner"
+  ON public.facility_zones
+  FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id
+        AND (f.owner_id = auth.uid() OR EXISTS (
+          SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+        ))
+    )
+  );
+
+CREATE POLICY "facility_zones_update_owner"
+  ON public.facility_zones
+  FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  );
+
+CREATE POLICY "facility_zones_delete_owner"
+  ON public.facility_zones
+  FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.facilities f
+      WHERE f.id = facility_id AND f.owner_id = auth.uid()
+    ) OR EXISTS (
+      SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  );
 
 -- ---------------------------------------------------------------------------
 -- Extend parking_spaces for facility hierarchy and secure QR IDs.
@@ -172,6 +334,69 @@ BEGIN
   END IF;
 END $$;
 
+-- Backfill facility rows before linking space rows to them.
+DO $$
+DECLARE
+  v_row RECORD;
+BEGIN
+  FOR v_row IN
+    SELECT ps.id, ps.owner_id, ps.name, ps.address_line1, ps.address_line2, ps.city,
+           ps.state, ps.country, ps.postal_code, ps.latitude, ps.longitude,
+           ps.is_covered, ps.is_gated, ps.has_cctv, ps.has_lighting,
+           ps.has_ev_charging, ps.is_accessible, ps.created_at, ps.updated_at,
+           ps.status
+    FROM public.parking_spaces ps
+    LEFT JOIN public.facilities f ON f.id = ps.id
+    WHERE f.id IS NULL
+  LOOP
+    INSERT INTO public.facilities (
+      id, owner_id, name, kind, status, qr_code_id,
+      address_line1, address_line2, city, state, country,
+      postal_code, latitude, longitude, is_covered, is_gated,
+      has_cctv, has_lighting, has_ev_charging, is_accessible,
+      created_at, updated_at
+    )
+    VALUES (
+      v_row.id,
+      v_row.owner_id,
+      v_row.name,
+      'independent_lot',
+      CASE v_row.status
+        WHEN 'active' THEN 'active'::facility_status
+        WHEN 'inactive' THEN 'inactive'::facility_status
+        WHEN 'pending_review' THEN 'inactive'::facility_status
+        WHEN 'suspended' THEN 'inactive'::facility_status
+        ELSE 'inactive'::facility_status
+      END,
+      public.generate_secure_qr_code('parkopt_fac_'),
+      v_row.address_line1,
+      v_row.address_line2,
+      v_row.city,
+      v_row.state,
+      v_row.country,
+      v_row.postal_code,
+      v_row.latitude,
+      v_row.longitude,
+      v_row.is_covered,
+      v_row.is_gated,
+      v_row.has_cctv,
+      v_row.has_lighting,
+      v_row.has_ev_charging,
+      v_row.is_accessible,
+      v_row.created_at,
+      v_row.updated_at
+    );
+  END LOOP;
+END $$;
+
+UPDATE public.parking_spaces ps
+SET facility_id = ps.id,
+    qr_code_id = COALESCE(ps.qr_code_id, public.generate_secure_qr_code('parkopt_space_')),
+    space_label = COALESCE(ps.space_label, 'A-' || (floor(random() * 900 + 100))::int::text)
+WHERE ps.facility_id IS NULL
+   OR ps.qr_code_id IS NULL
+   OR ps.space_label IS NULL;
+
 ALTER TABLE public.parking_spaces
   ADD CONSTRAINT parking_spaces_facility_fk
   FOREIGN KEY (facility_id) REFERENCES public.facilities(id) ON DELETE RESTRICT;
@@ -184,77 +409,6 @@ ALTER TABLE public.parking_spaces
   ADD CONSTRAINT parking_spaces_zone_fk
   FOREIGN KEY (zone_id) REFERENCES public.facility_zones(id) ON DELETE SET NULL;
 
-DO $$
-BEGIN
-  UPDATE public.parking_spaces ps
-  SET facility_id = ps.id
-  WHERE ps.facility_id IS NULL;
-END $$;
-
-DO $$
-BEGIN
-  INSERT INTO public.facilities (
-    id,
-    owner_id,
-    name,
-    kind,
-    status,
-    qr_code_id,
-    address_line1,
-    address_line2,
-    city,
-    state,
-    country,
-    postal_code,
-    latitude,
-    longitude,
-    is_covered,
-    is_gated,
-    has_cctv,
-    has_lighting,
-    has_ev_charging,
-    is_accessible,
-    created_at,
-    updated_at
-  )
-  SELECT
-    ps.id,
-    ps.owner_id,
-    ps.name,
-    'independent_lot',
-    ps.status,
-    'parkopt_fac_' || substr(md5(ps.id::text || 'facility:' || ps.name), 1, 24),
-    ps.address_line1,
-    ps.address_line2,
-    ps.city,
-    ps.state,
-    ps.country,
-    ps.postal_code,
-    ps.latitude,
-    ps.longitude,
-    ps.is_covered,
-    ps.is_gated,
-    ps.has_cctv,
-    ps.has_lighting,
-    ps.has_ev_charging,
-    ps.is_accessible,
-    ps.created_at,
-    ps.updated_at
-  FROM public.parking_spaces ps
-  WHERE ps.facility_id = ps.id
-  ON CONFLICT (id) DO NOTHING;
-END $$;
-
-DO $$
-BEGIN
-  UPDATE public.parking_spaces ps
-  SET qr_code_id = COALESCE(ps.qr_code_id, 'parkopt_space_' || substr(md5(ps.id::text || 'space:' || ps.name), 1, 24)),
-      space_label = COALESCE(ps.space_label, 'A-' || floor(random() * 900 + 100)::text),
-      facility_id = COALESCE(ps.facility_id, ps.id)
-  WHERE ps.qr_code_id IS NULL OR ps.facility_id IS NULL;
-END $$;
-
--- Ensure all existing rows now have a facility and secure space QR.
 ALTER TABLE public.parking_spaces
   ALTER COLUMN facility_id SET NOT NULL,
   ALTER COLUMN qr_code_id SET NOT NULL,
@@ -273,8 +427,91 @@ CREATE INDEX IF NOT EXISTS idx_parking_spaces_zone_id
   ON public.parking_spaces(zone_id);
 
 -- ---------------------------------------------------------------------------
+-- Hierarchy validation triggers
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.validate_facility_hierarchy()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF TG_TABLE_NAME = 'facility_floors' THEN
+    IF NEW.facility_id IS NULL THEN
+      RAISE EXCEPTION 'facility_id is required for a floor.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.facilities WHERE id = NEW.facility_id) THEN
+      RAISE EXCEPTION 'Floor facility_id does not match an existing facility.';
+    END IF;
+  END IF;
+
+  IF TG_TABLE_NAME = 'facility_zones' THEN
+    IF NEW.facility_id IS NULL THEN
+      RAISE EXCEPTION 'facility_id is required for a zone.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.facilities WHERE id = NEW.facility_id) THEN
+      RAISE EXCEPTION 'Zone facility_id does not match an existing facility.';
+    END IF;
+
+    IF NEW.floor_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+      FROM public.facility_floors ff
+      WHERE ff.id = NEW.floor_id
+        AND ff.facility_id = NEW.facility_id
+    ) THEN
+      RAISE EXCEPTION 'Zone floor_id must belong to the same facility.';
+    END IF;
+  END IF;
+
+  IF TG_TABLE_NAME = 'parking_spaces' THEN
+    IF NEW.facility_id IS NULL THEN
+      RAISE EXCEPTION 'facility_id is required for a parking space.';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM public.facilities WHERE id = NEW.facility_id) THEN
+      RAISE EXCEPTION 'Parking space facility_id does not match an existing facility.';
+    END IF;
+
+    IF NEW.floor_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+      FROM public.facility_floors ff
+      WHERE ff.id = NEW.floor_id
+        AND ff.facility_id = NEW.facility_id
+    ) THEN
+      RAISE EXCEPTION 'Parking space floor_id must belong to the same facility.';
+    END IF;
+
+    IF NEW.zone_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1
+      FROM public.facility_zones fz
+      WHERE fz.id = NEW.zone_id
+        AND fz.facility_id = NEW.facility_id
+    ) THEN
+      RAISE EXCEPTION 'Parking space zone_id must belong to the same facility.';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS facility_floor_hierarchy_guard ON public.facility_floors;
+CREATE TRIGGER facility_floor_hierarchy_guard
+  BEFORE INSERT OR UPDATE ON public.facility_floors
+  FOR EACH ROW EXECUTE FUNCTION public.validate_facility_hierarchy();
+
+DROP TRIGGER IF EXISTS facility_zone_hierarchy_guard ON public.facility_zones;
+CREATE TRIGGER facility_zone_hierarchy_guard
+  BEFORE INSERT OR UPDATE ON public.facility_zones
+  FOR EACH ROW EXECUTE FUNCTION public.validate_facility_hierarchy();
+
+DROP TRIGGER IF EXISTS parking_space_hierarchy_guard ON public.parking_spaces;
+CREATE TRIGGER parking_space_hierarchy_guard
+  BEFORE INSERT OR UPDATE ON public.parking_spaces
+  FOR EACH ROW EXECUTE FUNCTION public.validate_facility_hierarchy();
+
+-- ---------------------------------------------------------------------------
 -- Table: public.booking_passes
--- Purpose: stores the secure QR token used for a confirmed parking pass.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.booking_passes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -292,8 +529,47 @@ CREATE TABLE IF NOT EXISTS public.booking_passes (
 CREATE INDEX IF NOT EXISTS idx_booking_passes_status ON public.booking_passes(status);
 CREATE INDEX IF NOT EXISTS idx_booking_passes_token ON public.booking_passes(token);
 
+ALTER TABLE public.booking_passes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "booking_passes_select_owner_or_driver_or_admin" ON public.booking_passes;
+DROP POLICY IF EXISTS "booking_passes_no_direct_insert" ON public.booking_passes;
+DROP POLICY IF EXISTS "booking_passes_no_direct_update" ON public.booking_passes;
+DROP POLICY IF EXISTS "booking_passes_no_direct_delete" ON public.booking_passes;
+
+CREATE POLICY "booking_passes_select_owner_or_driver_or_admin"
+  ON public.booking_passes
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.bookings b
+      WHERE b.id = booking_id AND b.driver_id = auth.uid()
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM public.bookings b
+      JOIN public.parking_spaces ps ON ps.id = b.space_id
+      WHERE b.id = booking_id AND ps.owner_id = auth.uid()
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'admin'
+    )
+  );
+
+CREATE POLICY "booking_passes_no_direct_insert"
+  ON public.booking_passes
+  FOR INSERT WITH CHECK (FALSE);
+
+CREATE POLICY "booking_passes_no_direct_update"
+  ON public.booking_passes
+  FOR UPDATE USING (FALSE);
+
+CREATE POLICY "booking_passes_no_direct_delete"
+  ON public.booking_passes
+  FOR DELETE USING (FALSE);
+
 -- ---------------------------------------------------------------------------
--- Utility function: resolve a secure QR reference to a facility, space, or booking pass.
+-- Utility function: resolve a secure location QR reference.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.resolve_qr_reference(p_qr_code TEXT)
 RETURNS JSONB
@@ -304,59 +580,97 @@ SET search_path = public
 AS $$
 DECLARE
   v_code TEXT;
+  v_rec RECORD;
 BEGIN
-  v_code := COALESCE(p_qr_code, '');
+  v_code := NULLIF(btrim(COALESCE(p_qr_code, '')), '');
 
-  IF v_code = '' THEN
+  IF v_code IS NULL OR v_code !~ '^parkopt_(fac|space|floor|zone)_[A-Za-z0-9_-]{12,64}$' THEN
     RETURN jsonb_build_object('valid', false, 'error_code', 'INVALID_QR');
   END IF;
 
+  IF v_code LIKE 'parkopt_pass_%' THEN
+    RETURN jsonb_build_object('valid', false, 'error_code', 'BOOKING_PASS_NOT_ALLOWED');
+  END IF;
+
   IF v_code LIKE 'parkopt_fac_%' THEN
-    RETURN (
-      SELECT jsonb_build_object(
-        'valid', true,
-        'kind', 'facility',
-        'facility_id', f.id,
-        'facility_name', f.name,
-        'facility_qr_code', f.qr_code_id,
-        'status', f.status
-      )
-      FROM public.facilities f
-      WHERE f.qr_code_id = v_code
-      LIMIT 1
+    SELECT f.id, f.name, f.qr_code_id, f.status INTO v_rec
+    FROM public.facilities f
+    WHERE f.qr_code_id = v_code AND f.status = 'active'
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('valid', false, 'error_code', 'FACILITY_NOT_FOUND');
+    END IF;
+
+    RETURN jsonb_build_object(
+      'valid', true,
+      'kind', 'facility',
+      'facility_id', v_rec.id,
+      'facility_name', v_rec.name,
+      'facility_qr_code', v_rec.qr_code_id
+    );
+  END IF;
+
+  IF v_code LIKE 'parkopt_floor_%' THEN
+    SELECT ff.id, ff.facility_id, ff.floor_number, ff.qr_code_id, f.status INTO v_rec
+    FROM public.facility_floors ff
+    JOIN public.facilities f ON f.id = ff.facility_id
+    WHERE ff.qr_code_id = v_code AND f.status = 'active'
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('valid', false, 'error_code', 'FLOOR_NOT_FOUND');
+    END IF;
+
+    RETURN jsonb_build_object(
+      'valid', true,
+      'kind', 'floor',
+      'facility_id', v_rec.facility_id,
+      'floor_id', v_rec.id,
+      'floor_number', v_rec.floor_number,
+      'floor_qr_code', v_rec.qr_code_id
+    );
+  END IF;
+
+  IF v_code LIKE 'parkopt_zone_%' THEN
+    SELECT fz.id, fz.facility_id, fz.floor_id, fz.name, fz.qr_code_id, f.status INTO v_rec
+    FROM public.facility_zones fz
+    JOIN public.facilities f ON f.id = fz.facility_id
+    WHERE fz.qr_code_id = v_code AND f.status = 'active'
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('valid', false, 'error_code', 'ZONE_NOT_FOUND');
+    END IF;
+
+    RETURN jsonb_build_object(
+      'valid', true,
+      'kind', 'zone',
+      'facility_id', v_rec.facility_id,
+      'zone_id', v_rec.id,
+      'zone_name', v_rec.name,
+      'zone_qr_code', v_rec.qr_code_id
     );
   END IF;
 
   IF v_code LIKE 'parkopt_space_%' THEN
-    RETURN (
-      SELECT jsonb_build_object(
-        'valid', true,
-        'kind', 'space',
-        'space_id', ps.id,
-        'facility_id', ps.facility_id,
-        'space_label', ps.space_label,
-        'space_qr_code', ps.qr_code_id,
-        'status', ps.status
-      )
-      FROM public.parking_spaces ps
-      WHERE ps.qr_code_id = v_code
-      LIMIT 1
-    );
-  END IF;
+    SELECT ps.id, ps.facility_id, ps.space_label, ps.qr_code_id, f.status INTO v_rec
+    FROM public.parking_spaces ps
+    JOIN public.facilities f ON f.id = ps.facility_id
+    WHERE ps.qr_code_id = v_code AND ps.status = 'active' AND f.status = 'active'
+    LIMIT 1;
 
-  IF v_code LIKE 'parkopt_pass_%' THEN
-    RETURN (
-      SELECT jsonb_build_object(
-        'valid', true,
-        'kind', 'booking_pass',
-        'booking_id', bp.booking_id,
-        'pass_token', bp.token,
-        'status', bp.status,
-        'expires_at', bp.expires_at
-      )
-      FROM public.booking_passes bp
-      WHERE bp.token = v_code
-      LIMIT 1
+    IF NOT FOUND THEN
+      RETURN jsonb_build_object('valid', false, 'error_code', 'SPACE_NOT_FOUND');
+    END IF;
+
+    RETURN jsonb_build_object(
+      'valid', true,
+      'kind', 'space',
+      'space_id', v_rec.id,
+      'facility_id', v_rec.facility_id,
+      'space_label', v_rec.space_label,
+      'space_qr_code', v_rec.qr_code_id
     );
   END IF;
 
@@ -364,161 +678,7 @@ BEGIN
 END;
 $$;
 
--- ---------------------------------------------------------------------------
--- Function: generate_booking_pass
--- Purpose: create or fetch a secure booking QR token for a confirmed booking.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.generate_booking_pass(p_booking_id UUID)
-RETURNS JSONB
-LANGUAGE plpgsql
-VOLATILE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_booking RECORD;
-  v_pass RECORD;
-BEGIN
-  SELECT * INTO v_booking
-  FROM public.bookings b
-  WHERE b.id = p_booking_id;
-
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'error_code', 'BOOKING_NOT_FOUND');
-  END IF;
-
-  IF v_booking.status NOT IN ('pending', 'confirmed') THEN
-    RETURN jsonb_build_object('success', false, 'error_code', 'BOOKING_NOT_ELIGIBLE');
-  END IF;
-
-  SELECT * INTO v_pass
-  FROM public.booking_passes bp
-  WHERE bp.booking_id = p_booking_id
-  LIMIT 1;
-
-  IF FOUND THEN
-    RETURN jsonb_build_object(
-      'success', true,
-      'booking_id', p_booking_id,
-      'token', v_pass.token,
-      'expires_at', v_pass.expires_at,
-      'status', v_pass.status
-    );
-  END IF;
-
-  INSERT INTO public.booking_passes (booking_id, token, expires_at)
-  VALUES (
-    p_booking_id,
-    'parkopt_pass_' || replace(gen_random_uuid()::text, '-', ''),
-    NOW() + INTERVAL '30 days'
-  )
-  RETURNING * INTO v_pass;
-
-  RETURN jsonb_build_object(
-    'success', true,
-    'booking_id', p_booking_id,
-    'token', v_pass.token,
-    'expires_at', v_pass.expires_at,
-    'status', v_pass.status
-  );
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- Function: verify_booking_pass
--- Purpose: backend validation for a booking QR pass.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.verify_booking_pass(p_token TEXT)
-RETURNS JSONB
-LANGUAGE plpgsql
-VOLATILE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_pass RECORD;
-  v_now TIMESTAMPTZ;
-BEGIN
-  v_now := NOW();
-
-  IF p_token IS NULL OR p_token = '' THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'MISSING_TOKEN');
-  END IF;
-
-  SELECT bp.*, b.starts_at, b.ends_at, b.status AS booking_status, b.space_id, ps.name AS space_name, f.name AS facility_name
-  INTO v_pass
-  FROM public.booking_passes bp
-  JOIN public.bookings b ON b.id = bp.booking_id
-  JOIN public.parking_spaces ps ON ps.id = b.space_id
-  JOIN public.facilities f ON f.id = ps.facility_id
-  WHERE bp.token = p_token;
-
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'INVALID_PASS');
-  END IF;
-
-  IF v_pass.status = 'expired' THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'PASS_EXPIRED');
-  END IF;
-
-  IF v_pass.status = 'revoked' THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'PASS_REVOKED');
-  END IF;
-
-  IF v_pass.booking_status NOT IN ('pending', 'confirmed') THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'BOOKING_NOT_ELIGIBLE');
-  END IF;
-
-  IF v_pass.expires_at <= v_now THEN
-    UPDATE public.booking_passes
-    SET status = 'expired', verified_at = v_now
-    WHERE id = v_pass.id;
-    RETURN jsonb_build_object('valid', false, 'error_code', 'PASS_EXPIRED');
-  END IF;
-
-  IF v_now < v_pass.starts_at OR v_now > v_pass.ends_at THEN
-    RETURN jsonb_build_object('valid', false, 'error_code', 'PASS_NOT_ACTIVE_FOR_TIME');
-  END IF;
-
-  UPDATE public.booking_passes
-  SET verified_at = v_now,
-      last_verified_by = auth.uid()
-  WHERE id = v_pass.id;
-
-  RETURN jsonb_build_object(
-    'valid', true,
-    'booking_id', v_pass.booking_id,
-    'space_id', v_pass.space_id,
-    'space_name', v_pass.space_name,
-    'facility_name', v_pass.facility_name,
-    'starts_at', v_pass.starts_at,
-    'ends_at', v_pass.ends_at,
-    'status', v_pass.booking_status,
-    'pass_status', 'active'
-  );
-END;
-$$;
-
+REVOKE EXECUTE ON FUNCTION public.resolve_qr_reference(TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.resolve_qr_reference(TEXT) FROM anon;
 GRANT EXECUTE ON FUNCTION public.resolve_qr_reference(TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION public.resolve_qr_reference(TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.generate_booking_pass(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.verify_booking_pass(TEXT) TO anon;
-GRANT EXECUTE ON FUNCTION public.verify_booking_pass(TEXT) TO authenticated;
-
--- ---------------------------------------------------------------------------
--- Seed backfill: generate pass tokens for existing confirmed bookings.
--- ---------------------------------------------------------------------------
-DO $$
-DECLARE
-  booking_row RECORD;
-BEGIN
-  FOR booking_row IN
-    SELECT b.id
-    FROM public.bookings b
-    LEFT JOIN public.booking_passes bp ON bp.booking_id = b.id
-    WHERE bp.id IS NULL
-      AND b.status IN ('pending', 'confirmed')
-  LOOP
-    PERFORM public.generate_booking_pass(booking_row.id);
-  END LOOP;
-END $$;

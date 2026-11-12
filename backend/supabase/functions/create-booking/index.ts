@@ -156,11 +156,20 @@ Deno.serve(async (req: Request) => {
         p_booking_id: result.booking_id,
       })
 
-      if (!passError && passData) {
-        result.booking_pass_token = passData.token
-        result.booking_pass_expires_at = passData.expires_at
-        result.booking_pass_status = passData.status
+      if (passError || !passData || !passData.success) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error_code: 'PASS_GENERATION_FAILED',
+            message: 'Booking was created successfully, but the digital parking pass could not be generated.',
+          }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
       }
+
+      result.booking_pass_token = passData.token
+      result.booking_pass_expires_at = passData.expires_at
+      result.booking_pass_status = passData.status
     }
 
     if (!result.success) {

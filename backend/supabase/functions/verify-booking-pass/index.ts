@@ -29,6 +29,14 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return new Response(
+        JSON.stringify({ valid: false, error_code: 'UNAUTHENTICATED', message: 'Authorization header with Bearer token is required.' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     let body: Record<string, unknown>
     try {
       body = await req.json()
@@ -47,11 +55,10 @@ Deno.serve(async (req: Request) => {
       )
     }
 
-    const authHeader = req.headers.get('Authorization') ?? ''
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      authHeader ? { global: { headers: { Authorization: authHeader } } } : {}
+      { global: { headers: { Authorization: authHeader } } }
     )
 
     const { data, error } = await supabase.rpc('verify_booking_pass', {
@@ -70,12 +77,44 @@ Deno.serve(async (req: Request) => {
       valid?: boolean
       error_code?: string
       message?: string
+      booking_id?: string
+      space_id?: string
+      facility_name?: string
+      space_name?: string
+      starts_at?: string
+      ends_at?: string
+      status?: string
+      pass_status?: string
+    }
+
+    if (result.valid) {
+      return new Response(
+        JSON.stringify({
+          valid: true,
+          booking_id: result.booking_id,
+          space_id: result.space_id,
+          facility_name: result.facility_name,
+          space_name: result.space_name,
+          starts_at: result.starts_at,
+          ends_at: result.ends_at,
+          status: result.status,
+          pass_status: result.pass_status,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      )
     }
 
     return new Response(
-      JSON.stringify(result),
+      JSON.stringify({
+        valid: false,
+        error_code: result.error_code ?? 'INVALID_PASS',
+        message: result.message ?? 'Booking pass is invalid or no longer eligible.',
+      }),
       {
-        status: result.valid ? 200 : 401,
+        status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     )

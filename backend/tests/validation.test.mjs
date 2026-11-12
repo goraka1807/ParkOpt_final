@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -10,6 +12,8 @@ import {
   validateBookingRequest,
   validateSearchRequest,
 } from '../supabase/functions/shared/validation.mjs';
+
+const readMigration = (filename) => fs.readFileSync(path.join(process.cwd(), 'backend', 'supabase', 'migrations', filename), 'utf8');
 
 test('timestamps require an explicit timezone', () => {
   assert.equal(hasExplicitTimezone('2026-11-01T10:00:00+05:30'), true);
@@ -98,8 +102,32 @@ test('facility and booking QR identifiers use secure ParkOpt patterns', () => {
 test('booking pass validation rejects unsafe tokens and accepts secure ones', () => {
   const valid = validateBookingPassRequest({ token: 'parkopt_pass_8a7b9c6d5e4f9a1b2c3d4e5f6a7b8c9d' });
   const invalid = validateBookingPassRequest({ token: 'user@example.com' });
+  const reusedUserToken = validateBookingPassRequest({ token: 'parkopt_pass_user-123' });
 
   assert.equal(valid.valid, true);
   assert.equal(invalid.valid, false);
+  assert.equal(reusedUserToken.valid, false);
   assert.match(invalid.errors.join(' '), /valid ParkOpt/);
+});
+
+test('migration 009 enforces safe facility backfill and hierarchy constraints', () => {
+  const sql = readMigration('009_phase1_facility_qr_upgrade.sql');
+
+  assert.match(sql, /CASE v_row\.status[\s\S]*WHEN 'pending_review' THEN 'inactive'/i);
+  assert.match(sql, /public\.generate_secure_qr_code\(p_prefix TEXT\)/);
+  assert.match(sql, /validate_facility_hierarchy\(\)/);
+  assert.match(sql, /ALTER TABLE public\.parking_spaces\s+ALTER COLUMN facility_id SET NOT NULL/i);
+  assert.match(sql, /CREATE POLICY "facility_floors_select_public_active"/);
+  assert.match(sql, /CREATE POLICY "facility_zones_select_public_active"/);
+});
+
+test('migration 010 restricts pass generation and verification to authenticated callers', () => {
+  const sql = readMigration('010_phase1_qr_security_and_pass_fixes.sql');
+
+  assert.match(sql, /REVOKE EXECUTE ON FUNCTION public\.generate_booking_pass\(UUID\) FROM PUBLIC/i);
+  assert.match(sql, /REVOKE EXECUTE ON FUNCTION public\.verify_booking_pass\(TEXT\) FROM PUBLIC/i);
+  assert.match(sql, /auth\.uid\(\)/i);
+  assert.match(sql, /current_setting\('role', true\) = 'service_role'/i);
+  assert.match(sql, /gen_random_bytes\(32\)/i);
+  assert.match(sql, /status IN \('revoked', 'used'\)/i);
 });
