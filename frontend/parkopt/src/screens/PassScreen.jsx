@@ -124,7 +124,7 @@ export default function PassScreen({ booking, onViewBookings, onGoHome }) {
                     ))}
                   </g>
                 </svg>
-                <p className="text-[11px] text-center text-[#0A0E17] font-mono font-semibold tracking-widest mt-2">
+                <p className="text-[11px] text-center text-black font-mono font-semibold tracking-widest mt-2">
                   {booking_id ? booking_id.slice(0, 16).toUpperCase().replace(/-/g, ' ') : 'PK - BOOKING - ID'}
                 </p>
               </div>
