@@ -663,7 +663,7 @@ export default function SearchScreen({ onSelectFacility, session }) {
               type="button"
               onClick={search}
               aria-label="Search parking"
-              className="flex w-full items-center justify-center gap-2 rounded-full bg-[#c5f269] px-4 py-3 text-[12px] font-bold text-black"
+              className="flex w-full items-center justify-center gap-2 rounded-full bg-[#c5f269] px-4 py-3 text-[12px] font-bold !text-black"
             >
               <span className="material-symbols-outlined text-[14px]">search</span>
               Search parking
