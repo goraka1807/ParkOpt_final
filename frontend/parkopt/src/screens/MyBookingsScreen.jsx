@@ -9,7 +9,7 @@ function formatPrice(paisa) {
 function StatusBadge({ status }) {
   const config = {
     active: { bg: 'bg-[#C6F36A]/20', text: 'text-[#C6F36A]', border: 'border-[#C6F36A]/30', label: 'Active' },
-    upcoming: { bg: 'bg-[#c5f269]/10', text: 'text-black', border: 'border-[#c5f269]/20', label: 'Upcoming' },
+    upcoming: { bg: 'bg-[#c5f269]/10', text: '!text-black', border: 'border-[#c5f269]/20', label: 'Upcoming' },
     completed: { bg: 'bg-[#1c2b3c]', text: 'text-[#94A3B8]', border: 'border-white/10', label: 'Completed' },
     cancelled: { bg: 'bg-[#93000a]/20', text: 'text-[#FB7185]', border: 'border-[#FB7185]/20', label: 'Cancelled' },
     default: { bg: 'bg-[#1c2b3c]', text: 'text-[#94A3B8]', border: 'border-white/10', label: status },
