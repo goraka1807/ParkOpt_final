@@ -95,8 +95,8 @@ export default function MyBookingsScreen({ session }) {
                 onClick={() => setActiveTab(t.id)}
                 className={`flex-1 py-2 px-3 rounded-full text-[13px] font-semibold flex items-center justify-center gap-1.5 transition-all ${
                   activeTab === t.id
-                    ? 'bg-[#c5f269] text-[#253600]'
-                    : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+                    ? 'bg-[#c5f269] !text-black'
+                    : 'text-[#94A3B8] hover:!text-black'
                 }`}
                 style={{ fontFamily: 'Space Grotesk, sans-serif' }}
               >
